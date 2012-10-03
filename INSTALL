@@ -1,0 +1,8 @@
+Installation
+=============
+To install Firetable, run 'make install'. This will install the Firetable script in /usr/sbin and the Firetable configuration in /etc/firetable. Use the DESTDIR parameter to install Firetable in a different location. In that case, also change the CONFIG_DIR setting inside the Firetable script.
+
+
+Debian (based) operating systems
+=================================
+To create a Firetable Debian package, execute the script 'extra/make_debian_package'.

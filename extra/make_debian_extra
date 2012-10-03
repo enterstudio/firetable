@@ -1,0 +1,52 @@
+#!/bin/sh
+
+if [ ! -f /etc/debian_version ]; then
+	echo "Debian (clone) required."
+	exit
+fi
+
+# Make Debian package
+#
+cd `dirname $0`/..
+extra/make_debian_package -b
+version=`grep VERSION src/firetable | head -1 | cut -f4 -d'"'`
+if [ ! -f firetable_${version}_amd64.deb ]; then
+	exit
+fi
+
+# Generate .dsc file
+#
+if [ -f firetable-${version}.tar.gz ]; then
+	cp firetable-${version}.tar.gz firetable_${version}.tar.gz
+fi
+if [ ! -f firetable_${version}.tar.gz ]; then
+	mv firetable_*.deb build_debian_package
+	extra/make_source_package
+	mv firetable-${version}.tar.gz firetable_${version}.tar.gz
+	mv build_debian_package/firetable_*.deb .
+fi
+
+size=`stat firetable_${version}.tar.gz -c%s`
+md5=`md5sum firetable_${version}.tar.gz | cut -f1 -d' '`
+sha1=`sha1sum firetable_${version}.tar.gz | cut -f1 -d' '`
+sha256=`sha256sum firetable_${version}.tar.gz | cut -f1 -d' '`
+depends=`cat extra/debian/control | grep Build-Depends | cut -f2 -d:`
+
+sed "s/<VERSION>/${version}/" extra/debian/firetable.dsc | sed "s/<SIZE>/${size}/" | sed "s/<DEPENDS>/${depends}/" | \
+	sed "s/<MD5>/${md5}/" | sed "s/<SHA1>/${sha1}/" | sed "s/<SHA256>/${sha256}/" > firetable_${version}.dsc
+gpg --clearsign firetable_${version}.dsc
+mv firetable_${version}.dsc.asc firetable_${version}.dsc
+
+# Generate .changes file
+#
+cd build_debian_package
+dpkg-genchanges > ../firetable_${version}.changes
+cd ..
+gpg --clearsign firetable_${version}.changes
+mv firetable_${version}.changes.asc firetable_${version}.changes
+
+# Done
+#
+if [ "$1" != "-b" ]; then
+	rm -rf build_debian_package
+fi

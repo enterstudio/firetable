@@ -1,0 +1,1186 @@
+#!/usr/bin/php5
+<?php
+	/* Firetable, Copyright (C) by Hugo Leisink <hugo@leisink.net>
+	 *
+	 * This program is free software; you can redistribute it and/or modify
+	 * it under the terms of the GNU General Public License as published by
+	 * the Free Software Foundation; version 2 of the License. For a copy,
+	 * see http://www.gnu.org/licenses/gpl-2.0.html.
+	 *
+	 * This program is distributed in the hope that it will be useful,
+	 * but WITHOUT ANY WARRANTY; without even the implied warranty of
+	 * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+	 * GNU General Public License for more details.
+	 */
+
+	define("VERSION", "5.3");
+	define("CONFIG_DIR", "/etc/firetable");
+
+	define("NORMAL", "\x1b[0m");
+	define("RED",    "\x1b[31m");
+	define("YELLOW", "\x1b[33m");
+	define("GREEN",  "\x1b[32m");
+
+	/* IPtables class
+	 */
+	class iptables {
+		private $binary = null;
+		private $commands = array();
+		private $debug = false;
+
+		/* Constructor
+		 *
+		 * INPUT:  string binary
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		public function __construct($binary) {
+			$this->binary = $binary;
+		}
+
+		/* Destructor
+		 *
+		 * INPUT:  -
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		public function __destruct() {
+			$this->execute_queued();
+		}
+
+		/* Magic method set
+		 *
+		 * INPUT:  string key, string value
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		public function __set($key, $value) {
+			switch ($key) {
+				case "debug": $this->debug = $value; break;
+			}
+		}
+
+		/* Execute iptables command
+		 *
+		 * INPUT:  string iptables command
+		 * OUTPUT: true
+		 * ERROR:  false
+		 */
+		public function execute($command, &$output = null, $force = false) {
+			$command = preg_replace('/  +/', " ", $command);
+			if (($this->debug == false) || $force) {
+				$output = null;
+				$return_var = null;
+				exec($this->binary." ".$command, $output, $return_value);
+
+				return $return_value;
+			} else {
+				print $this->binary." ".$command."\n";
+
+				return 0;
+			}
+		}
+
+		/* Execute queued iptables commands
+		 *
+		 * INPUT:  -
+		 * OUTPUT: true
+		 * ERROR:  false
+		 */
+		public function execute_queued() {
+			foreach ($this->commands as $command) {
+				if ($this->execute($command) !== 0) {
+					return false;
+				}
+			}
+
+			$this->flush_queue();
+
+			return true;
+		}
+
+		/* Queue iptables command
+		 *
+		 * INPUT:  string iptables command
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		public function queue($command) {
+			array_push($this->commands, $command);
+		}
+
+		/* Flush command queue
+		 *
+		 * INPUT:  -
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		public function flush_queue() {
+			$this->commands = array();
+		}
+	}
+
+	/* Firetable class
+	 */
+	abstract class firetable {
+		private $iptables = null;
+		private $debug = false;
+		private $script = null;
+		private $server = null;
+		protected $ip_version = 4;
+		protected $digit_separator = ":";
+		protected $anywhere = "0.0.0.0/0";
+		protected $icmp = "icmp";
+		private $settings = array(
+			"iptables4"    => "/sbin/iptables",
+			"iptables6"    => "/sbin/ip6tables",
+			"enable_ipv4"  => false,
+			"enable_ipv6"  => false,
+			"enable_nat"   => false,
+			"log_priority" => "info");
+		private $aliases = null;
+		private $protocols = array();
+
+		/* Constructor
+		 *
+		 * INPUT:  -
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		public function __construct() {
+			/* Firetable configuration
+			 */
+			if (($config = $this->read_file(CONFIG_DIR."/firetable.conf")) === false) {
+				exit("Can't find firetable configuration file.\n");
+			}
+
+			foreach ($config as $line) {
+				list($key, $value) = explode("=", $line);
+				$value = trim($value);
+
+				if (in_array($value, array("true", "yes"))) {
+					$value = true;
+				} else if (in_array($value, array("false", "no"))) {
+					$value = false;
+				}
+				$this->settings[trim($key)] = $value;
+			}
+
+			/* Disable NAT for IPv6
+			 */
+			if ($this->ip_version == 6) {
+				$this->settings["enable_nat"] = false;
+			}
+
+			/* iptables object
+			 */
+			$this->iptables = new iptables($this->settings["iptables".$this->ip_version]);
+			$this->iptables->debug = $this->debug;
+		}
+
+		/* Read file without comments
+		 *
+		 * INPUT:  string filename
+		 * OUTPUT: array file content
+		 * ERROR:  false
+		 */
+		private function read_file($file) {
+			if (($fp = @fopen($file, "r")) === false) {
+				return false;
+			}
+
+			$content = array();
+			while (($line = fgets($fp)) !== false) {
+				$line = trim(preg_replace('/#.*/', "", $line));
+				if ($line == "") {
+					continue;
+				}
+				$line = str_replace("\t", " ", $line);
+				$line = preg_replace('/  +/', " ", $line);
+
+				array_push($content, $line);
+			}
+
+			fclose($fp);
+
+			return $content;
+		}
+
+		/* Read firetable rules file
+		 *
+		 * INPUT:  string filename
+		 * OUTPUT: array rules
+		 * ERROR:  false
+		 */
+		private function read_rules_file($file) {
+			if (($content = $this->read_file(CONFIG_DIR."/".$file)) === false) {
+				printf("Error reading file '%s/%s'.\n", CONFIG_DIR, $file);
+				return false;
+			}
+
+			$config = array();
+			foreach ($content as $line) {
+				if (substr($line, 0, 8) == "include ") {
+					$file = trim(substr($line, 8));
+					if (($include = $this->read_rules_file($file)) === false) {
+						return false;
+					}
+					$config = array_merge($config, $include);
+				} else {
+					array_push($config, $line);
+				}
+			}
+
+			return $config;
+		}
+
+		/* Replace aliases
+		 *
+		 * INPUT:  string line
+		 * OUTPUT: string line
+		 * ERROR:  -
+		 */
+		private function replace_aliases($line) {
+			foreach ($this->aliases as $match => $alias) {
+				$line = str_replace("$".$match, $alias, $line);
+			}
+
+			return $line;
+		}
+
+		/* Expand sets in firewall rule
+		 *
+		 * INPUT:  string rule
+		 * OUTPUT: array expanded rules
+		 * ERROR:  -
+		 */
+		private function expand_sets($rule) {
+			if (($begin = strrpos($rule, "{")) === false) {
+				return array($rule);
+			} else if (($end = strpos($rule, "}", $begin + 1)) === false) {
+				return array($rule);
+			}
+
+			$head = substr($rule, 0, $begin);
+			$set = substr($rule, $begin + 1, $end - $begin - 1);
+			$tail = substr($rule, $end + 1);
+			$items = explode(",", $set);
+
+			$rules = array();
+			foreach ($items as &$item) {
+				$expanded = $this->expand_sets($head.trim($item).$tail);
+				foreach ($expanded as $item) {
+					array_push($rules, $item);
+				}
+			}
+
+			return $rules;
+		}
+
+		/* Count interfaces with active firewall
+		 *
+		 * INPUT:  -
+		 * OUTPUT: int active firewalls
+		 * ERROR:  -
+		 */
+		private function count_firewalls() {
+			$this->iptables->execute("-L OUTPUT -n", $output, true);
+			array_shift($output);
+			array_shift($output);
+			array_shift($output);
+
+			return count($output);
+		}
+
+		/* Firewall active?
+		 *
+		 * INPUT:  string interface
+		 * OUTPUT: bool active
+		 * ERROR:  -
+		 */
+		private function firewall_active($interface) {
+			$this->iptables->execute("-L OUTPUT -n", $output, true);
+			array_shift($output);
+			array_shift($output);
+
+			$len = strlen($interface) + 1;
+			foreach ($output as $line) {
+				if (substr($line, 0, $len) == $interface."_") {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		/* Support tables active?
+		 *
+		 * INPUT:  string interface
+		 * OUTPUT: bool active
+		 * ERROR:  -
+		 */
+		private function support_tables_active() {
+			$this->iptables->execute("-L OUTPUT -n", $output, true);
+
+			return count($output) > 2;
+		}
+
+		/* Support tables active?
+		 *
+		 * INPUT:  string interface, string filename
+		 * OUTPUT: bool active
+		 * ERROR:  -
+		 */
+		private function get_id($name, $filename) {
+			if (($file = file($filename)) === false) {
+				return false;
+			}
+
+			foreach ($file as $line) {
+				list($key, , $id) = explode(":", $line, 4);
+
+				if ($key == $name) {
+					return $id;
+				}
+			}
+
+			return null;
+		}
+
+		/* Filter rule
+		 *
+		 * INPUT:  string command, array rule
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		private function filter($interface, $command, $rule) {
+			$target = "-j ".strtoupper($command);
+			$user = null;
+
+			$i = 0;
+			switch ($rule[$i]) {
+				case "incoming":
+					$table = "-A ".$interface."_in";
+					$from_host = $this->anywhere;
+					$to_host = $this->server."/".$this->aliases["subnetmask"];
+					break;
+				case "outgoing":
+					$table = "-A ".$interface."_out";
+					$from_host = $this->server."/".$this->aliases["subnetmask"];
+					$to_host = $this->anywhere;
+					break;
+				case "user":
+					$table = "-A ".$interface."_out";
+					$protocol = "-p tcp";
+					if (ctype_digit($rule[++$i]) == false) {
+						if (($user = $this->get_id($rule[$i], "/etc/passwd")) == false) {
+							printf("unknown user '%s'\n", $rule[$i]);
+							return false;
+						}
+					}
+					$user = "-m owner --uid-owner ".$rule[$i];
+					$to_host = $anywhere;
+					break;
+				case "group":
+					$table = "-A ".$interface."_out";
+					$protocol = "-p tcp";
+					if (ctype_digit($rule[++$i]) == false) {
+						if (($user = $this->get_id($rule[$i], "/etc/group")) == false) {
+							printf("unknown group '%s'\n", $rule[$i]);
+							return false;
+						}
+					}
+					$user = "-m owner --gid-owner ".$rule[$i];
+					$to_host = $anywhere;
+					break;
+				default:
+					printf("unknown command '%s'\n", $rule[$i]);
+					return false;
+			}
+			$i++;
+
+			$ports_allowed = false;
+
+			if ($user == null) {
+				/* Blocking user traffic
+				 */
+				if ($rule[$i] != "ip") {
+					$protocol = "-p ".$rule[$i];
+					if ($rule[$i] == "tcp") {
+						$protocol .= " --syn";
+						$ports_allowed = true;
+					} else if ($rule[$i] == "udp") {
+						$ports_allowed = true;
+					} else if (($rule[$i] == $this->icmp) && ($rule[$i+1] == "type")) {
+						$i += 2;
+						$protocol .= " --".$this->icmp."-type ".$rule[$i];
+					}
+				}
+				$i++;
+
+				if ($rule[$i] == "from") {
+					list($from_host, $from_port) = explode($this->digit_separator, $rule[++$i]);
+					if ($from_port != "") {
+						if ($ports_allowed == false) {
+							print "ports are only allowed for tcp or udp.\n";
+							return false;
+						}
+						$from_port = "--sport ".str_replace("-", ":", $from_port);
+					}
+					$i++;
+				}
+				$from_host = "-s ".$from_host;
+			}
+
+			if ($rule[$i] == "to") {
+				list($to_host, $to_port) = explode($this->digit_separator, $rule[++$i]);
+				if ($to_port != "") {
+					if ($ports_allowed == false) {
+						print "ports are only allowed for tcp or udp.\n";
+						return false;
+					}
+					$to_port = "--dport ".str_replace("-", ":", $to_port);
+				}
+				$i++;
+			}
+			$to_host = "-d ".$to_host;
+
+			if (count($rule) != $i) {
+				printf("unknown option '%s'\n", $rule[$i]);
+				return false;
+			}
+
+			return implode(" ", array($table, $protocol, $from_host, $from_port, $to_host, $to_port, $user, $target));
+		}
+
+		/* Forward rule
+		 *
+		 * INPUT:  bool dont, array rule
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		private function forward($interface, $dont, $rule) {
+			$i = 0;
+			$ports_allowed = false;
+
+			if ($rule[$i] != "ip") {
+				$protocol = "-p ".$rule[$i];
+				if ($rule[$i] == "tcp") {
+					$protocol .= " --syn";
+					$ports_allowed = true;
+				} else if ($rule[$i] == "udp") {
+					$ports_allowed = true;
+				} else if (($rule[$i] == $this->icmp) && ($rule[$i+1] == "type")) {
+					$i += 2;
+					$protocol .= " --".$this->icmp."-type ".$rule[$i];
+				}
+			}
+			$i++;
+
+			if ($rule[$i] == "from") {
+				list($from_host, $from_port) = explode($this->digit_separator, $rule[++$i]);
+				if ($from_port != "") {
+					if ($ports_allowed == false) {
+						print "ports are only allowed for tcp or udp.\n";
+						return false;
+					}
+					$from_port = "--sport ".str_replace("-", ":", $from_port);
+				}
+				$i++;
+				$from_host = "-s ".$from_host;
+			}
+
+			if ($rule[$i] == "to") {
+				list($to_host, $to_port) = explode($this->digit_separator, $rule[++$i]);
+				if ($to_port != "") {
+					if ($ports_allowed == false) {
+						print "ports are only allowed for tcp or udp.\n";
+						return false;
+					}
+					$to_port = "--dport ".str_replace("-", ":", $to_port);
+				}
+				$i++;
+				$to_host = "-d ".$to_host;
+			}
+
+			if (count($rule) != $i) {
+				printf("unknown option '%s'\n", $rule[$i]);
+				return false;
+			}
+
+			$target = "-j ".($dont ? "RETURN" : "ACCEPT");
+
+			return implode(" ", array("-A ".$interface."_forw", $protocol, $from_host, $from_port, $to_host, $to_port, $target));
+		}
+
+		/* SNAT rule
+		 *
+		 * INPUT:  bool dont, array rule
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		private function snat($interface, $dont, $rule) {
+			$i = 0;
+			$ports_allowed = false;
+
+			if ($rule[$i] != "ip") {
+				$protocol = "-p ".$rule[$i];
+				if ($rule[$i] == "tcp") {
+					$protocol .= " --syn";
+					$ports_allowed = true;
+				} else if ($rule[$i] == "udp") {
+					$ports_allowed = true;
+				} else if (($rule[$i] == $this->icmp) && ($rule[$i+1] == "type")) {
+					$i += 2;
+					$protocol .= " --".$this->icmp."-type ".$rule[$i];
+				}
+			}
+			$i++;
+
+			if ($rule[$i] == "from") {
+				list($from_host, $from_port) = explode($this->digit_separator, $rule[++$i]);
+				if ($from_port != "") {
+					if ($ports_allowed == false) {
+						print "ports are only allowed for tcp or udp.\n";
+						return false;
+					}
+					$from_port = "--sport ".str_replace("-", ":", $from_port);
+				}
+				$i++;
+				$from_host = "-s ".$from_host;
+			}
+
+			if ($rule[$i] == "to") {
+				list($to_host, $to_port) = explode($this->digit_separator, $rule[++$i]);
+				if ($to_port != "") {
+					if ($ports_allowed == false) {
+						print "ports are only allowed for tcp or udp.\n";
+						return false;
+					}
+					$to_port = "--dport ".str_replace("-", ":", $to_port);
+				}
+				$i++;
+				$to_host = "-d ".$to_host;
+			}
+
+			if ($dont == false) {
+				if ($rule[$i] == "->") {
+					$snat_host = $rule[++$i];
+					$i++;
+				} else {
+					$snat_host = $this->server;
+				}
+
+				$target = "-j SNAT --to-source ".$snat_host;
+			} else {
+				$target = "-j RETURN";
+			}
+
+			if (count($rule) != $i) {
+				printf("unknown option '%s'\n", $rule[$i]);
+				return false;
+			}
+
+			return implode(" ", array("-A ".$interface."_snat -t nat", $protocol, $from_host, $from_port, $to_host, $to_port, $target));
+		}
+
+		/* DNAT rule
+		 *
+		 * INPUT:  bool dont, array rule
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		private function dnat($interface, $dont, $rule) {
+			$i = 0;
+			$ports_allowed = false;
+
+			if ($rule[$i] != "ip") {
+				$protocol = "-p ".$rule[$i];
+				if ($rule[$i] == "tcp") {
+					$protocol .= " --syn";
+					$ports_allowed = true;
+				} else if ($rule[$i] == "udp") {
+					$ports_allowed = true;
+				} else if (($rule[$i] == $this->icmp) && ($rule[$i+1] == "type")) {
+					$i += 2;
+					$protocol .= " --".$this->icmp."-type ".$rule[$i];
+				}
+			}
+			$i++;
+
+			if ($rule[$i] == "from") {
+				list($from_host, $from_port) = explode($this->digit_separator, $rule[++$i]);
+				if ($from_port != "") {
+					if ($ports_allowed == false) {
+						print "ports are only allowed for tcp or udp.\n";
+						return false;
+					}
+					$from_port = "--sport ".str_replace("-", ":", $from_port);
+				}
+				$i++;
+				$from_host = "-s ".$from_host;
+			}
+
+			if ($rule[$i] == "to") {
+				list($to_host, $target_port) = explode($this->digit_separator, $rule[++$i]);
+				if ($target_port != "") {
+					if ($ports_allowed == false) {
+						print "ports are only allowed for tcp or udp.\n";
+						return false;
+					}
+					$to_port = "--dport ".str_replace("-", ":", $target_port);
+				}
+				$i++;
+			} else {
+				$to_host = $this->server."/".$this->aliases["subnetmask"];
+			}
+			$to_host = "-d ".$to_host;
+
+			if ($dont == false) {
+				if ($rule[$i] != "->") {
+					print "specify the new destination\n";
+					return false;
+				}
+
+				$dnat = "--to ".$rule[++$i];
+				list($dnat_host, $dnat_port) = explode($this->digit_separator, $rule[$i++]);
+				if ($dnat_port == "") {
+					$dnat_port = $target_port;
+				}
+				$dnat_host = "-d ".$dnat_host;
+				$dnat_port = "--dport ".$dnat_port;
+
+				$target = "-j DNAT";
+			} else {
+				$target = "-j RETURN";
+			}
+
+			if (count($rule) != $i) {
+				printf("unknown option '%s'\n", $rule[$i]);
+				return false;
+			}
+
+			return implode(" ", array("-A ".$interface."_dnat -t nat", $protocol, $from_host, $from_port, $to_host, $to_port, $target, $dnat));
+		}
+
+		/* Start firewall
+		 *
+		 * INPUT:  array interfaces
+		 * OUTPUT: true
+		 * ERROR:  false
+		 */
+		private function start($interfaces) {
+			/* Load protocols list
+			 */
+			if (($protocols = $this->read_file("/etc/protocols")) !== false) {
+				foreach ($protocols as $protocol) {
+					list($protocol) = explode(" ", $protocol);
+					array_push($this->protocols, $protocol);
+				}
+			}
+
+			if (($this->ip_version == 4) && ($this->debug == false)) {
+				/* Kernelconfig
+				 */
+				system("echo 1 > /proc/sys/net/ipv4/ip_forward");
+				system("echo 1 > /proc/sys/net/ipv4/tcp_syncookies");
+				system("echo 1 > /proc/sys/net/ipv4/icmp_echo_ignore_broadcasts");
+				system("echo 0 > /proc/sys/net/ipv4/conf/all/accept_source_route");
+				system("echo 0 > /proc/sys/net/ipv4/conf/all/accept_redirects");
+			}
+
+			if (($this->support_tables_active() == false) || $this->debug) {
+				if ($this->debug) {
+					printf("IPv%d iptables commands for support tables:\n", $this->ip_version);
+				}
+
+				$this->iptables->execute("-Z");
+
+				/* Log and drop
+				 */
+				$this->iptables->execute("-N log_drop");
+				$this->iptables->execute("-A log_drop -j LOG --log-level ".$this->settings["log_priority"]." --log-prefix 'FIRETABLE".$this->ip_version.": '");
+				$this->iptables->execute("-A log_drop -j DROP");
+
+				/* TCP packet belongs to a known stream
+				 */
+				$this->iptables->execute("-N est_rel");
+				$this->iptables->execute("-A INPUT -j est_rel");
+				$this->iptables->execute("-A OUTPUT -j est_rel");
+				$this->iptables->execute("-A FORWARD -j est_rel");
+				$this->iptables->execute("-A est_rel -m state --state ESTABLISHED -j ACCEPT");
+				$this->iptables->execute("-A est_rel -p tcp --syn -m state --state RELATED -j ACCEPT");
+
+				/* Anti-hack
+				 */
+				$this->iptables->execute("-N anti-hack");
+				$this->iptables->execute("-A INPUT -p tcp -j anti-hack");
+				$this->iptables->execute("-A FORWARD -p tcp -j anti-hack");
+				# Reject fragments
+				if ($this->ip_version == 4) {
+					$this->iptables->execute("-A anti-hack -f -j log_drop");
+				}
+				# X-Mas TCP packets
+				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags ALL ALL -j log_drop");
+				# Null TCP packets
+				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags ALL NONE -j log_drop");
+				# Other weird stuff
+				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags SYN,RST SYN,RST -j log_drop");
+				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags SYN,FIN SYN,FIN -j log_drop");
+				# IP spoofing
+				#$this->iptables("-A anti-hack -p tcp --tcp-flags SYN,ACK SYN,ACK -m state --state NEW -j REJECT --reject-with tcp-reset");
+				# SYN flood
+				#$this->iptables("-A anti-hack -p tcp --syn -m limit ! --limit 2/s --limit-burst 8 -j log_drop");
+
+				if ($this->debug) {
+					print "\n";
+				}
+			}
+
+			if ($this->debug == false) {
+				printf("Starting IPv%d firewall for interface:", $this->ip_version);
+			}
+
+			foreach ($interfaces as $interface) {
+				if ($this->ip_version == 4) {
+					$this->server = trim(exec("/sbin/ifconfig ".$interface." | grep 'inet addr' | cut -f2 -d':' | cut -f1 -d' '"));
+				} else {
+					$this->server = trim(exec("/sbin/ifconfig ".$interface." | grep 'inet6 addr' | grep 'Scope:Global' | head -1 | cut -f2- -d':' | cut -f2 -d' ' | cut -f1 -d'/'"));
+				}
+
+				if ($this->server == "") {
+					if ($this->debug == false) {
+						print " ".RED.$interface.NORMAL;
+					}
+					continue;
+				}
+
+				$config_file = "ipv".$this->ip_version."_".$interface;
+
+				if (($this->debug == false) && $this->firewall_active($interface)) {
+					print " ".YELLOW.$interface.NORMAL;
+					continue;
+				} else if (($rules = $this->read_rules_file($config_file)) === false) {
+					if ($this->debug == false) {
+						print " ".RED.$interface.NORMAL;
+					}
+					continue;
+				}
+
+				$this->aliases = array(
+					"subnetmask" => "32");
+
+				if (($this->ip_version == 4) && ($this->debug == false)) {
+					system("echo 1 > /proc/sys/net/ipv4/conf/".$interface."/rp_filter");
+				}
+
+				/* Input table
+				 */
+				$this->iptables->queue("-N ".$interface."_in");
+				$this->iptables->queue("-A INPUT -i ".$interface." -j ".$interface."_in");
+
+				/* Output table
+				 */
+				$this->iptables->queue("-N ".$interface."_out");
+				$this->iptables->queue("-A OUTPUT -o $interface -j ".$interface."_out");
+
+				/* Forwarding table
+				 */
+				$this->iptables->queue("-N ".$interface."_forw");
+				$this->iptables->queue("-A FORWARD -i $interface -j ".$interface."_forw");
+
+				if ($this->settings["enable_nat"]) {
+					/* SNAT table
+					 */
+					$this->iptables->queue("-N ".$interface."_snat -t nat");
+					$this->iptables->queue("-A POSTROUTING -t nat -o $interface -j ".$interface."_snat");
+
+					/* DNAT table
+					 */
+					$this->iptables->queue("-N ".$interface."_dnat -t nat");
+					$this->iptables->queue("-A PREROUTING -t nat -i $interface -j ".$interface."_dnat");
+				}
+
+				foreach ($rules as $rule) {
+					$rule = $this->replace_aliases($rule);
+
+					if (substr($rule, 0, 4) == "set ") {
+						list(, $key, $value) = explode(" ", $rule, 3);
+						$this->aliases[$key] = $value;
+						continue;
+					}
+
+					/* Change aliases
+					 */
+					$rule = str_replace("anywhere", $this->anywhere, $rule);
+					$rule = str_replace("server", $this->server, $rule);
+					$rule = str_replace("domain", $this->server."/".$this->aliases["subnetmask"], $rule);
+					if ($this->ip_version == 6) {
+						$rule = str_replace("icmp", "icmpv6", $rule);
+					}
+
+					/* Expand sets
+					 */
+					$expanded = $this->expand_sets($rule);
+
+					foreach ($expanded as $rule) {
+						$parts = explode(" ", $rule);
+						$command = array_shift($parts);
+
+						switch ($command) {
+							case "accept":
+							case "drop":
+							case "reject":
+								$result = $this->filter($interface, $command, $parts);
+								break;
+							case "snat":
+								$result = $this->snat($interface, false, $parts);
+								break;
+							case "dnat":
+								$result = $this->dnat($interface, false, $parts);
+								break;
+							case "forward":
+								$result = $this->forward($interface, false, $parts);
+								break;
+							case "dont":
+								$command = array_shift($parts);
+								switch ($command) {
+									case "snat":
+										$result = $this->snat($interface, true, $parts);
+										break;
+									case "dnat":
+										$result = $this->dnat($interface, true, $parts);
+										break;
+									case "forward":
+										$result = $this->forward($interface, true, $parts);
+										break;
+									default:
+										printf("Unknown command '%s'\n", $command);
+										$result = false;
+								}
+								break;
+							case "iptables":
+								$result = implode(" ", $parts);
+								break;
+							default:
+								printf("Unknown command '%s'\n", $command);
+								$result = false;
+						}
+
+						if ($result === false) {
+							$this->iptables->flush_queue();
+							print " ".RED.$interface.NORMAL;
+							continue 3;
+						} else {
+							$this->iptables->queue($result);
+						}
+					}
+				}
+
+				$this->iptables->queue("-A ".$interface."_in -j log_drop");
+				$this->iptables->queue("-A ".$interface."_out -j log_drop");
+
+				if ($this->debug) {
+					printf("IPv%d iptables commands for ".GREEN.$interface.NORMAL.":\n", $this->ip_version);
+				}
+
+				if ($this->iptables->execute_queued() == false) {
+					$this->stop(array($interface));
+					if ($this->debug == false) {
+						print " ".RED.$interface.NORMAL;
+					}
+				} else if ($this->debug == false) {
+					print " ".GREEN.$interface.NORMAL;
+				} else {
+					print "\n";
+				}
+			}
+
+			if ($this->debug == false) {
+				print "\n";
+			}
+
+			return true;
+		}
+
+		/* Stop firewall
+		 *
+		 * INPUT:  array interfaces
+		 * OUTPUT: true
+		 * ERROR:  false
+		 */
+		private function stop($interfaces) {
+			printf("Stopping IPv%d firewall for interface:", $this->ip_version);
+
+			foreach ($interfaces as $interface) {
+				$config_file = CONFIG_DIR."/ipv".$this->ip_version."_".$interface;
+
+				if ($this->firewall_active($interface) == false) {
+					if (file_exists($config_file) == false) {
+						print " ".YELLOW.$interface.NORMAL;
+						continue;
+					} else {
+						print " ".RED.$interface.NORMAL;
+						continue;
+					}
+				}
+
+				if ($this->settings["enable_nat"]) {
+					/* DNAT table
+					 */
+					$this->iptables->execute("-F ".$interface."_dnat -t nat");
+					$this->iptables->execute("-D PREROUTING -t nat -i ".$interface." -j ".$interface."_dnat");
+					$this->iptables->execute("-X ".$interface."_dnat -t nat");
+
+					/* SNAT table
+					 */
+					$this->iptables->execute("-F ".$interface."_snat -t nat");
+					$this->iptables->execute("-D POSTROUTING -t nat -o ".$interface." -j ".$interface."_snat");
+					$this->iptables->execute("-X ".$interface."_snat -t nat");
+				}
+
+				/* Forwarding table
+				 */
+				$this->iptables->execute("-F ".$interface."_forw");
+				$this->iptables->execute("-D FORWARD -i ".$interface." -j ".$interface."_forw");
+				$this->iptables->execute("-X ".$interface."_forw");
+
+				/* Output table
+				 */
+				$this->iptables->execute("-F ".$interface."_out");
+				$this->iptables->execute("-D OUTPUT -o ".$interface." -j ".$interface."_out");
+				$this->iptables->execute("-X ".$interface."_out");
+
+				/* Input table
+				 */
+				$this->iptables->execute("-F ".$interface."_in");
+				$this->iptables->execute("-D INPUT -i ".$interface." -j ".$interface."_in");
+				$this->iptables->execute("-X ".$interface."_in");
+
+				/* Support tables
+				 */
+				if ($this->count_firewalls() == 0) {
+					$this->iptables->execute("-D INPUT -p tcp -j anti-hack");
+					$this->iptables->execute("-D FORWARD -p tcp -j anti-hack");
+					$this->iptables->execute("-F anti-hack");
+					$this->iptables->execute("-X anti-hack");
+
+					$this->iptables->execute("-D INPUT -j est_rel");
+					$this->iptables->execute("-D OUTPUT -j est_rel");
+					$this->iptables->execute("-D FORWARD -j est_rel");
+					$this->iptables->execute("-F est_rel");
+					$this->iptables->execute("-X est_rel");
+
+					$this->iptables->execute("-F log_drop");
+					$this->iptables->execute("-X log_drop");
+				}
+
+				print " ".GREEN.$interface.NORMAL;
+			}
+
+			print "\n";
+
+			return true;
+		}
+
+		/* Flush firewall
+		 *
+		 * INPUT:  -
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		private function flush() {
+			$tables = array("");
+			if ($this->settings["enable_nat"]) {
+				array_push($tables, " -t nat");
+			}
+
+			foreach ($tables as $table) {
+				$this->iptables->execute("-L -n".$table, $output);
+
+				foreach ($output as $line) {
+					if (substr($line, 0, 5) == "Chain") {
+						$field = explode(" (", substr($line, 6), 2);
+						$this->iptables->execute("-F ".$field[0].$table);
+					}
+				}
+				foreach ($output as $line) {
+					if ((substr($line, 0, 5) == "Chain") && (strpos($line, "(policy") === false)) {
+						$field = explode(" (", substr($line, 6), 2);
+						$this->iptables->execute("-X ".$field[0].$table);
+					}
+				}
+			}
+
+			$this->iptables->execute("-Z");
+			$this->iptables->execute("-P INPUT ACCEPT");
+			$this->iptables->execute("-P OUTPUT ACCEPT");
+			$this->iptables->execute("-P FORWARD DROP");
+		}
+
+		/* Show firewall status
+		 *
+		 * INPUT:  -
+		 * OUTPUT: true
+		 * ERROR:  -
+		 */
+		private function status() {
+			$this->iptables->execute("-L OUTPUT", $output, true);
+			array_shift($output);
+			array_shift($output);
+			array_shift($output);
+
+			$interfaces = array();
+			foreach ($output as $line) {
+				list($interface) = explode("_", $line, 2);
+				array_push($interfaces, $interface);
+			}
+
+			print "IPv".$this->ip_version." firewall active for: ".GREEN.implode(" ", $interfaces).NORMAL."\n";
+
+			$this->iptables->execute("-L -nv", $output, true);
+			print implode("\n", $output)."\n";
+			if ($this->settings["enable_nat"]) {
+				print "\n";
+				$this->iptables->execute("-L -nvt nat", $output, true);
+				print implode("\n", $output)."\n";
+			}
+
+			print "\n";
+		}
+
+		/* Show firetable usage
+		 *
+		 * INPUT:  -
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		private function show_usage() {
+			print "Usage: ".$this->script." [-4|-6] {start|stop|restart|debug} [<interface>...]\n";
+			print "       ".$this->script." {flush|status}\n";
+		}
+
+		/* Main firetable routine
+		 *
+		 * INPUT:  -
+		 * OUTPUT: -
+		 * ERROR:  -
+		 */
+		public function execute($args) {
+			if ($this->settings["enable_ipv".$this->ip_version] == false) {
+				return;
+			}
+
+			$this->script = array_shift($args);
+			$command = array_shift($args);
+
+			if (count($args) == 0) {
+				if (($dp = opendir(CONFIG_DIR)) == false) {
+					print "Error reading configuration directory.\n";
+					return;
+				}
+
+				while (($file = readdir($dp)) != false) {
+					list($interface, $rest) = explode(".", $file, 2);
+					list($protocol, $interface) = explode("_", $interface, 2);
+
+					if (($interface == null) || ($rest != null)) {
+						continue;
+					} else if ($protocol != "ipv".$this->ip_version) {
+						continue;
+					}
+
+					array_push($args, $interface);
+				}
+				sort($args);
+
+				closedir($dp);
+			}
+
+			switch ($command) {
+				case "restart":
+					if ($this->stop($args) == false) {
+						return false;
+					} else {
+						return $this->start($args);
+					}
+				case "start":
+					return $this->start($args);
+				case "stop":
+					return $this->stop($args);
+				case "flush":
+					$this->flush();
+					return true;
+				case "status":
+					$this->status();
+					return true;
+				case "debug":
+					$this->debug = true;
+					$this->iptables->debug = true;
+					return $this->start($args);
+				default:
+					$this->show_usage();
+					return false;
+			}
+
+			return true;
+		}
+	}
+
+	/* Firetable for IPv4
+	 */
+	class firetable4 extends firetable {
+		protected $ip_version = 4;
+		protected $digit_separator = ":";
+		protected $anywhere = "0.0.0.0/0";
+		protected $icmp = "icmp";
+	}
+
+	/* Firetable for IPv6
+	 */
+	class firetable6 extends firetable {
+		protected $ip_version = 6;
+		protected $digit_separator = ".";
+		protected $anywhere = "::/0";
+		protected $icmp = "icmpv6";
+	}
+
+	/* Main
+	 */
+	error_reporting(E_ALL & ~E_NOTICE);
+
+	if ($argv[1] == "-v") {
+		printf("Firetable v%s (iptables firewall management tool)\n", VERSION);
+		printf("Copyright (C) by Hugo Leisink <hugo@leisink.net>\n");
+		return;
+	}
+
+	if (posix_getuid() !== 0) {
+		exit("You must be root.\n");
+	}
+
+	if ($argv[1] == "-4") {
+		array_shift($argv);
+		$use_ipv4 = true;
+		$use_ipv6 = false;
+	} else if ($argv[1] == "-6") {
+		array_shift($argv);
+		$use_ipv4 = false;
+		$use_ipv6 = true;
+	} else {
+		$use_ipv4 = true;
+		$use_ipv6 = true;
+	}
+
+	if ($use_ipv4) {
+		$firetable = new firetable4;
+		if ($firetable->execute($argv) == false) {
+			return;
+		}
+	}
+
+	if ($use_ipv6) {
+		$firetable = new firetable6;
+		$firetable->execute($argv);
+	}
+?>

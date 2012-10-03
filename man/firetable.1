@@ -1,0 +1,178 @@
+.TH FIRETABLE 1
+
+.SH NAME
+firetable \- IPtables firewall script
+
+.SH SYNOPSIS
+.B firetable
+{start|stop|restart|status|flush|debug}
+
+.SH CONFIG
+Place the configuration for each interface in a seperate file: /etc/firetable/ipv[46]_<interface>
+
+.SH FORMAT
+include <filename>
+
+set subnetmask 0..32
+.br
+set <variable> <value>    usage: $<variable>
+
+(accept|drop|reject) (incoming|outgoing) ip [from <subnet>] [to <subnet>]
+.br
+(accept|drop|reject) (incoming|outgoing) (tcp|udp) [from <subnet>[:<port>]] [to <host>[:<port>]]
+.br
+(accept|drop|reject) (incoming|outgoing) icmp [type <icmp-type>] [from <subnet>] [to <subnet>]
+.br
+(accept|drop|reject) user <username|userid> [to <subnet>[:<port>]]
+.br
+(accept|drop|reject) group <groupname|groupid> [to <subnet>[:<port>]]
+
+[dont] forward ip [from <subnet>] [to <subnet>]
+.br
+[dont] forward (tcp|udp) [from <subnet>[:<port>]] [to <subnet>[:<port>]]
+.br
+[dont] forward icmp [type <icmp-type>] [from <subnet>] [to <subnet>]
+.br
+snat (tcp|udp) [from <subnet>[:<port>]] [to <subnet>[:<port>]] [-> <host>]
+.br
+snat (icmp|ip) [from <subnet>] [to <subnet>] [-> <host>]
+.br
+dont snat (tcp|udp) [from <subnet>[:<port>]] [to <subnet>[:<port>]]
+.br
+dont snat (icmp|ip) [from <subnet>] [to <subnet>]
+.br
+dnat (tcp|udp) [from <subnet>[:<port>]] to <subnet>:<port> -> <host>[:<port>]
+.br
+dont dnat (tcp|udp) [from <subnet>[:<port>]] to <subnet>:<port>
+
+iptables <iptables commandline options>
+
+.SH TYPES
+<host>  : <ip_address>
+.br
+<subnet>: <ip_address>[/<subnetmask>]
+.br
+<port>  : (1..65535)[-(1..65535)]
+.br
+<userid>: (0..65535)
+
+.SH ALIASES
+ 'server' will be translated to the IP address of the interface
+.br
+ 'domain' will be translated to the IP address if the interface with $subnetmask as the subnetmask
+.br
+ 'anywhere' will be translated to '0.0.0.0/0' for IPv4 or '::/0' for IPv6
+
+.SH SETS
+You can combine multiple lines by using sets. The elements in a set are seperated by commas and the set starts and ends with an accolade. For example, the configuration line
+.br
+
+	accept incoming {tcp, udp} to server:{100, 200}
+.br
+
+expands to:
+.br
+
+	accept incoming tcp to server:100
+.br
+	accept incoming tcp to server:200
+.br
+	accept incoming udp to server:100
+.br
+	accept incoming udp to server:200
+
+.SH EXAMPLE
+In the following example, a server connects a LAN (eth1) to the Internet (eth0).
+.TP
+.B Configuration file for the Internet interface (ipv4_eth0):
+# Firetable configurationfile for eth0
+.br
+#
+.br
+set subnetmask 32
+.br
+set ntp_server ntp.xs4all.nl
+.br
+set web_server 192.168.0.5
+
+# Allowed traffic
+.br
+#
+.br
+accept incoming tcp to server:{21-22, 25, 80, 443, 993, 995}
+.br
+accept incoming udp from anywhere:53
+.br
+accept incoming udp from $ntp_server to server:123
+.br
+drop outgoing tcp to anywhere:23
+
+# SNAT LAN traffic
+.br
+#
+.br
+# Don't forget to forward the traffic coming from the LAN.
+.br
+#
+.br
+snat ip from 192.168.0.0/16
+
+# DNAT (port forwarding)
+.br
+#
+.br
+dnat tcp to server:1022 -> server:22
+
+dnat tcp to server:{80, 443} -> $web_server
+.br
+forward tcp from anywhere to $web_server:{80, 443} # other machine, so forward
+
+accept outgoing ip from server
+
+.TP
+.B Configuration file for the LAN interface (ipv4_eth1):
+# Firetable configurationfile for eth1
+.br
+#
+.br
+set subnetmask 32
+
+# Allowed traffic
+.br
+#
+.br
+accept incoming ip to anywhere
+.br
+forward ip from 192.168.0.0/16
+.br
+
+accept outgoing ip from anywhere
+
+.SH SETTINGS
+Place the following settings in /etc/firetable/firetable.conf
+.TP
+.B enable_nat = yes|no
+If you've disabled NAT in the kernel, also disable it in Firetable.
+.TP
+.B use_colors = yes|no
+Allow Firetable to use colors.
+.TP
+.B enable_on_boot = [<interface> [<interface>] ...]
+Space-seperated list of interfaces Firetable will use at boottime. When empty, Firetable will use all available interfaces.
+.TP
+.B log_priority = (debug|info|notice|warning|error|crit|alert|panic)
+Syslog's log priority for Firetable
+
+.SH FILES
+.B /usr/sbin/firetable
+.br
+.B /etc/init.d/firetable
+.br
+.B /etc/firetable/ipv[46]_<interface>
+.br
+.B /etc/firetable/firetable.conf
+
+.SH AUTHOR
+Firetable is written by Hugo Leisink <hugo@leisink.net> in PHP. More info about Firetable at website:
+.br
+\fIhttp://projects.leisink.org/\fP

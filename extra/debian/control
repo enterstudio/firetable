@@ -1,0 +1,13 @@
+Source: firetable
+Section: net
+Priority: optional
+Maintainer: Hugo Leisink <hugo@leisink.net>
+Homepage: http://projects.leisink.net/firetable
+Standards-Version: 3.6.2
+
+Package: firetable
+Architecture: any
+Depends: netbase, iptables, php5-cli
+Conflicts:
+Description: IPtables firewall management script
+ Script to maintain an IPtables firewall

@@ -1,0 +1,220 @@
+firetable (5.3) stable; urgency=low
+
+  * Default IPv6 configuration added.
+  * Bugfix: incorrect IPv6 address detection.
+
+ -- Hugo Leisink <hugo@leisink.net>  Sat,  9 Jun 2012 17:45:41 +0200
+
+firetable (5.2) stable; urgency=low
+
+  * Source reorganized.
+  * Added script to create a Debian package.
+  * Bugfix: typo in Debian init script.
+
+ -- Hugo Leisink <hugo@leisink.net>  Fri,  3 Feb 2012 12:04:18 +0100
+
+firetable (5.1) stable; urgency=low
+
+  * ICMP type added to forward, snat and dnat rule.
+  * Script rewritten in PHP.
+
+ -- Hugo Leisink <hugo@leisink.net>  Thu, 23 Dec 2010 19:24:10 +0100
+
+firetable (5.0) stable; urgency=low
+
+  * IPv6 support.
+
+ -- Hugo Leisink <hugo@leisink.net>  Thu, 23 Sep 2010 12:21:29 +0200
+
+firetable (4.9) stable; urgency=low
+
+  * Bugfix: better handling of spaces inside a set.
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed,  7 Feb 2007 10:28:54 +0100
+
+firetable (4.8) stable; urgency=low
+
+  * Improved search-and-replace for variables.
+  * Variables can now be included from another file.
+  * Configurationfile 'settings' renamed to 'firetable.conf'.
+  * No need to give full path for 'include'.
+  * More detailed 'status' output.
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed, 30 Aug 2006 17:08:40 +0200
+
+firetable (4.7) stable; urgency=low
+
+  * Combine multiple lines by using sets.
+  * Usage of variables.
+  * Small improvements
+
+ -- Hugo Leisink <hugo@leisink.net>  Mon, 15 May 2006 18:35:24 +0200
+
+firetable (4.6) stable; urgency=low
+
+  * log_priority setting added.
+
+ -- Hugo Leisink <hugo@leisink.net>  Sat, 26 Nov 2005 16:10:39 +0100
+
+firetable (4.5) stable; urgency=low
+
+  * 'iptables' option added.
+  * Filter traffic based on a user's groupname or groupid.
+  * Use both usernames and userids for usertraffic filtering.
+  * Extra settings via /etc/firetable/settings.
+  * Removal of /etc/default/firetable. See start_on_boot in the settings file.
+  * 'firetable start' starts all available interfaces.
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed, 31 Aug 2005 23:03:11 +0200
+
+firetable (4.4) stable; urgency=low
+
+  * Improved SNAT rules.
+
+ -- Hugo Leisink <hugo@leisink.net>  Thu, 25 Aug 2005 09:53:41 +0200
+
+firetable (4.3) stable; urgency=low
+
+  * Removed automatic forwarding for DNAT rules.
+
+ -- Hugo Leisink <hugo@leisink.net>  Fri,  5 Aug 2005 00:49:24 +0200
+
+firetable (4.2) stable; urgency=high
+
+  * Specify ports in forward rule.
+  * Improved error-reporting.
+  * Bugfix: double 'to <subnet>[:<port>]' for user-rule in manualpage.
+  * Bugfix: 'include' closed the input chain.
+
+ -- Hugo Leisink <hugo@leisink.net>  Fri, 15 Jul 2005 21:58:29 +0200
+
+firetable (4.1) stable; urgency=low
+
+  * 'dont' option for forward, SNAT and DNAT.
+  * Improved flush function.
+  * Manualpage added.
+  * Bugfix: UDP and ICMP also forwarded in case of an established connection.
+
+ -- Hugo Leisink <hugo@leisink.net>  Thu, 17 Jun 2005 16:49:24 +0200
+
+firetable (4.0) stable; urgency=low
+
+  * Complete syntax redesign
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed,  8 Jun 2005 18:41:47 +0200
+
+firetable (3.4) stable; urgency=low
+
+  * FORWARDING_RULE option added.
+  * DENY_USER_RULE option added.
+  * DNAT rules made more secure.
+
+ -- Hugo Leisink <hugo@leisink.net>  Sat, 28 May 2005 19:27:32 +0200
+
+firetable (3.3) stable; urgency=low
+
+  * Policy set to ACCEPT on flush.
+
+ -- Hugo Leisink <hugo@leisink.net>  Sat, 18 Sep 2004 15:48:04 +0200
+
+firetable (3.2) stable; urgency=low
+
+  * Bugfix: <CR> removed from $conf{LOCAL_IP}.
+
+ -- Hugo Leisink <hugo@leisink.net>  Mon, 29 Dec 2003 15:21:17 +0100
+
+firetable (3.1) stable; urgency=low
+
+  * config_to_interface() fixed.
+
+ -- Hugo Leisink <hugo@leisink.net>  Fri, 14 Nov 2003 10:37:14 +0100
+
+firetable (3.0) stable; urgency=low
+
+  * Splitted firewallscript (/usr/sbin/firetable and /etc/init.d/firetable).
+  * /etc/firetable/interfaces removed.
+  * /etc/default/firetable added.
+
+ -- Hugo Leisink <hugo@leisink.net>  Sat,  17 Sep 2003 12:37:12 +0200
+
+firetable (2.7) stable; urgency=low
+
+  * flush option.
+  * DENY_SERVICE_LIST option added.
+  * Quicker TCP handling.
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed,  2 Sep 2003 14:14:02 +0200
+
+firetable (2.6) stable; urgency=low
+
+  * Support for my own VPN package.
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed, 12 Mar 2003 21:29:43 +0100
+
+firetable (2.5) stable; urgency=low
+
+  * UDP support for DENY_SERVICE_RULE.
+  * Source IP address option for DNAT_RULE.
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed, 12 Mar 2003 21:29:43 +0100
+
+firetable (2.4) stable; urgency=low
+
+  * SHIELD_RULE and DENY_SERVICE_RULE improved.
+
+ -- Hugo Leisink <hugo@leisink.net>  Fri,  7 Feb 2003 18:04:20 +0100
+
+firetable (2.3) stable; urgency=low
+
+  * BLOCK_RULE --> DENY_SERVICE_RULE.
+  * Abilty to drop all traffic from a certain host/domain with 1 rule.
+
+ -- Hugo Leisink <hugo@leisink.net>  Tue, 13 Nov 2002 14:31:12 +0100
+
+firetable (2.2) stable; urgency=low
+
+  * MASQUERADE_RULE --> SNAT_RULE.
+  * REDIRECT_RULE --> DNAT_RULE.
+  * Ability to block certain remote services, like telnet or KaZaA.
+
+ -- Hugo Leisink <hugo@leisink.net>  Tue, 20 Aug 2002 11:17:36 +0200
+
+firetable (2.1) stable; urgency=low
+
+  * Portforwarding with different destination port than source port.
+  * Ability to stop firewall for an inactive interface.
+  * Extra rule: reject.
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed, 14 Aug 2002 12:09:23 +0200
+
+firetable (2.0) stable; urgency=low
+
+  * Advanced configuration.
+
+ -- Hugo Leisink <hugo@leisink.net>  Mon,  5 Aug 2002 23:52:10 +0200
+
+firetable (1.3) stable; urgency=low
+
+  * Protection against SYN-flood.
+  * Dropped hack-packets are logged.
+
+ -- Hugo Leisink <hugo@leisink.net>  Sun, 28 Jul 2002 00:26:46 +0200
+
+firetable (1.2) stable; urgency=low
+
+  * Support for more than one device.
+
+ -- Hugo Leisink <hugo@leisink.net>  Fri, 26 Jul 2002 18:35:54 +0200
+
+firetable (1.1) stable; urgency=low
+
+  * Removed: the anti-syn-flood rule gave problems with FTP.
+  * Bugfix: forwarding enabled for udp and icmp.
+
+ -- Hugo Leisink <hugo@leisink.net>  Thu,  5 Jul 2002 23:59:14 +0200
+
+firetable (1.0) stable; urgency=low
+
+  * Created from Firechain package (ipchains firewall package).
+
+ -- Hugo Leisink <hugo@leisink.net>  Wed,  4 Jul 2002 15:06:56 +0200

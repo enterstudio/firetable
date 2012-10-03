@@ -1,0 +1,17 @@
+# Firetable configuration for IPv6
+
+
+# Settings
+#
+set subnetmask 48
+
+
+# Incoming traffic
+#
+accept incoming tcp to server.{22, 25, 80, 443, 993, 995}
+accept incoming icmp type {1,2,3,4,133,134,135,136,137} to server
+
+
+# Outgoing traffic
+#
+accept outgoing ip

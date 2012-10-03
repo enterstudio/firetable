@@ -1,0 +1,66 @@
+#!/bin/sh
+
+if [ ! -f /etc/debian_version ]; then
+	echo "Debian (clone) required."
+	exit
+fi
+
+# Checking for packages required for building a Debian package
+#
+echo "-- Checking for required packages"
+packages="dpkg-dev debhelper fakeroot"
+missing=""
+for package in ${packages}; do
+	installed=`dpkg -l ${package} | tail -1 | cut -b1-2`
+	if [ "$installed" != "ii" ]; then
+		missing="${missing} ${package}"
+	fi
+done
+if [ "${missing}" != "" ]; then
+	echo "The following packages are missing:${missing}"
+	exit
+fi
+
+# Setup build directory
+#
+cd `dirname $0`/..
+if [ -d build_debian_package ]; then
+	rm -rf build_debian_package
+fi
+mkdir build_debian_package
+cd build_debian_package
+cp -r ../extra/debian .
+
+# Make Debian package
+#
+dh_testdir
+fakeroot dh_testroot
+if [ -f /usr/bin/dh_prep ]; then
+	dh_prep
+else
+	dh_clean -k
+fi
+dh_installdirs
+echo "-- Building package"
+dh_strip
+cp ../src/firetable debian/firetable/usr/sbin
+cp ../config/* debian/firetable/etc/firetable
+fakeroot dh_installman ../man/firetable.1
+fakeroot dh_installinit -n
+fakeroot dh_installdocs
+cp ../ChangeLog debian/changelog
+fakeroot dh_installchangelogs
+gzip -9 debian/firetable/usr/share/doc/firetable/changelog*
+gzip -9 debian/firetable/usr/share/man/man1/*
+dh_installinit -o
+fakeroot dh_installdeb
+fakeroot dh_gencontrol
+fakeroot dh_md5sums
+fakeroot dh_builddeb
+
+# Done
+#
+cd ..
+if [ "$1" != "-b" ]; then
+	rm -rf build_debian_package
+fi
