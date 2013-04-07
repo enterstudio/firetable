@@ -14,25 +14,29 @@
 
 
 # Defaults
-if [ -r /etc/firetable/firetable.conf ]; then
+if [ -r /etc/firetable/firetable.conf ]; then 
 	INTERFACES=`grep "^enable_on_boot" /etc/firetable/firetable.conf | cut -f2 -d"=" | sed "s/^ *//"`
 fi
 
-function firetable
+function firetable {
+	if [ "${INTERFACES}" = "all" ]; then
+		/usr/sbin/firetable $1
+	elif [ "${INTERFACES}" != "" ]; then
+		/usr/sbin/firetable $1 ${INTERFACES}
+	fi
+}
 
 case "$1" in
 	start|stop)
-		if [ "${INTERFACES}" = "all" ]; then
-			/usr/sbin/firetable $1
-		elif [ "${INTERFACES}" != "" ]; then
-			/usr/sbin/firetable $1 ${INTERFACES}
-		fi
+		firetable $1
 		;;
 	restart|force-reload)
+		firetable stop
+		firetable start
 		;;
 	*)
-		echo "Usage: /etc/init.d/firetable {start|stop}"
-		exit 1
+		echo "Usage: /etc/init.d/firetable {start|stop|restart|force-reload}"
+		exit 1 
 esac
 
 exit 0
