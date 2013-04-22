@@ -1,13 +1,9 @@
-Proxy
-=====
-This is a webproxy script written in PHP by Hugo Leisink <hugo@leisink.net>.
+Firetable
+=========
+Firetable is a tool written in PHP to maintain IPtables firewalls under Linux. Firetable has been written by Hugo Leisink <hugo@leisink.net>.
 
 Installation
 ------------
-- Copy all files to a suitable location.
-- Rewrite *all* requests to index.php.
-- Make this proxy available via both HTTP and HTTPS.
-- Add a wildcard to the hostname you use for this proxy website and use it
-  as an alias in your webserver configuration. For example, if you choose
-  proxy.domain.net as the hostname for this proxy, make *.proxy.domain.net
-  an alias for it.
+To install Firetable, run 'make install'. This will install the Firetable script in /usr/sbin and the Firetable configuration in /etc/firetable. Use the DESTDIR parameter to install Firetable in a different location. In that case, also change the CONFIG_DIR setting inside the Firetable script.
+
+To create a Firetable Debian package, execute the script 'extra/make_debian_package'.
