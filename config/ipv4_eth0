@@ -11,6 +11,7 @@ set subnetmask 32
 accept incoming tcp to server:{22, 25, 80, 443, 993, 995}
 accept incoming udp to server:53
 accept incoming icmp type 11 from anywhere to server # Traceroute
+drop incoming udp to anywhere:{137,138}
 
 
 # Outgoing traffic

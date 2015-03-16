@@ -1,4 +1,4 @@
-#!/usr/bin/php5
+#!/usr/bin/php
 <?php
 	/* Firetable, Copyright (C) by Hugo Leisink <hugo@leisink.net>
 	 *
@@ -13,7 +13,7 @@
 	 * GNU General Public License for more details.
 	 */
 
-	define("VERSION", "5.3");
+	define("VERSION", "5.4");
 	define("CONFIG_DIR", "/etc/firetable");
 
 	define("NORMAL", "\x1b[0m");
@@ -127,10 +127,6 @@
 		private $debug = false;
 		private $script = null;
 		private $server = null;
-		protected $ip_version = 4;
-		protected $digit_separator = ":";
-		protected $anywhere = "0.0.0.0/0";
-		protected $icmp = "icmp";
 		private $settings = array(
 			"iptables4"    => "/sbin/iptables",
 			"iptables6"    => "/sbin/ip6tables",
@@ -140,6 +136,10 @@
 			"log_priority" => "info");
 		private $aliases = null;
 		private $protocols = array();
+		protected $ip_version = null;
+		protected $digit_separator = null;
+		protected $anywhere = null;
+		protected $icmp = null;
 
 		/* Constructor
 		 *
@@ -267,7 +267,7 @@
 			$items = explode(",", $set);
 
 			$rules = array();
-			foreach ($items as &$item) {
+			foreach ($items as $item) {
 				$expanded = $this->expand_sets($head.trim($item).$tail);
 				foreach ($expanded as $item) {
 					array_push($rules, $item);
@@ -320,8 +320,11 @@
 		 * ERROR:  -
 		 */
 		private function support_tables_active() {
-			$this->iptables->execute("-L OUTPUT -n", $output, true);
+			if ($this->debug) {
+				return false;
+			}
 
+			$this->iptables->execute("-L OUTPUT -n", $output, true);
 			return count($output) > 2;
 		}
 
@@ -345,6 +348,25 @@
 			}
 
 			return null;
+		}
+
+		/* Check if table exists
+		 *
+		 * INPUT:  string table name
+		 * OUTPUT: boolean
+		 * ERROR:  -
+		 */
+		private function table_exists($table) {
+			$this->iptables->execute("-L -n", $output, true);
+
+			$len = strlen($table) + 7;
+			foreach ($output as $line) {
+				if (substr($line, 0, $len) == "Chain ".$table." ") {
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		/* Filter rule
@@ -510,7 +532,7 @@
 
 			$target = "-j ".($dont ? "RETURN" : "ACCEPT");
 
-			return implode(" ", array("-A ".$interface."_forw", $protocol, $from_host, $from_port, $to_host, $to_port, $target));
+			return implode(" ", array("-A ".$interface."_fwd", $protocol, $from_host, $from_port, $to_host, $to_port, $target));
 		}
 
 		/* SNAT rule
@@ -637,20 +659,12 @@
 			$to_host = "-d ".$to_host;
 
 			if ($dont == false) {
-				if ($rule[$i] != "->") {
+				if ($rule[$i++] != "->") {
 					print "specify the new destination\n";
 					return false;
 				}
 
-				$dnat = "--to ".$rule[++$i];
-				list($dnat_host, $dnat_port) = explode($this->digit_separator, $rule[$i++]);
-				if ($dnat_port == "") {
-					$dnat_port = $target_port;
-				}
-				$dnat_host = "-d ".$dnat_host;
-				$dnat_port = "--dport ".$dnat_port;
-
-				$target = "-j DNAT";
+				$target = "-j DNAT --to-destination ".$rule[$i++];
 			} else {
 				$target = "-j RETURN";
 			}
@@ -660,7 +674,55 @@
 				return false;
 			}
 
-			return implode(" ", array("-A ".$interface."_dnat -t nat", $protocol, $from_host, $from_port, $to_host, $to_port, $target, $dnat));
+			return implode(" ", array("-A ".$interface."_dnat -t nat", $protocol, $from_host, $from_port, $to_host, $to_port, $target));
+		}
+
+		/* Apply blacklist
+		 *
+		 * INPUT:  string interface, string blacklist source file / url
+		 * OUTPUT: true
+		 * ERROR:  false
+		 */
+		private function apply_blacklist($interface, $source) {
+			static $tables = array();
+
+			if (in_array($interface, $tables) == false) {
+				$this->iptables->queue("-N ".$interface."_blip");
+				$this->iptables->queue("-I INPUT -i ".$interface." -j ".$interface."_blip");
+				$this->iptables->queue("-N ".$interface."_blop");
+				$this->iptables->queue("-I OUTPUT -o ".$interface." -j ".$interface."_blop");
+
+				array_push($tables, $interface);
+			}
+
+			if ((substr($source, 0, 7) != "http://") && (substr($source, 0, 8) != "https://")) {
+				if (file_exists($source) == false) {
+					$file = CONFIG_DIR."/".$file;
+				}
+			}
+
+			if (($blacklist = @file($source)) === false) {
+				return false;
+			}
+
+			foreach ($blacklist as $ip_address) {
+				if ($line[0] == "#") {
+					continue;
+				}
+				if (($ip_address = rtrim($ip_address)) == "") {
+					continue;
+				}
+
+				if (filter_var($ip_address, FILTER_VALIDATE_IP) == false) {
+					printf("Ignored invalid blacklist IP: %s\n", $ip_address);
+					continue;
+				}
+
+				$this->iptables->queue("-A ".$interface."_blip -s ".$ip_address." -j DROP");
+				$this->iptables->queue("-A ".$interface."_blop -d ".$ip_address." -j DROP");
+			}
+
+			return true;
 		}
 
 		/* Start firewall
@@ -689,7 +751,7 @@
 				system("echo 0 > /proc/sys/net/ipv4/conf/all/accept_redirects");
 			}
 
-			if (($this->support_tables_active() == false) || $this->debug) {
+			if ($this->support_tables_active() == false) {
 				if ($this->debug) {
 					printf("IPv%d iptables commands for support tables:\n", $this->ip_version);
 				}
@@ -713,24 +775,24 @@
 
 				/* Anti-hack
 				 */
-				$this->iptables->execute("-N anti-hack");
-				$this->iptables->execute("-A INPUT -p tcp -j anti-hack");
-				$this->iptables->execute("-A FORWARD -p tcp -j anti-hack");
+				$this->iptables->execute("-N security");
+				$this->iptables->execute("-A INPUT -p tcp -j security");
+				$this->iptables->execute("-A FORWARD -p tcp -j security");
 				# Reject fragments
 				if ($this->ip_version == 4) {
-					$this->iptables->execute("-A anti-hack -f -j log_drop");
+					$this->iptables->execute("-A security -f -j log_drop");
 				}
 				# X-Mas TCP packets
-				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags ALL ALL -j log_drop");
+				$this->iptables->execute("-A security -p tcp --tcp-flags ALL ALL -j log_drop");
 				# Null TCP packets
-				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags ALL NONE -j log_drop");
+				$this->iptables->execute("-A security -p tcp --tcp-flags ALL NONE -j log_drop");
 				# Other weird stuff
-				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags SYN,RST SYN,RST -j log_drop");
-				$this->iptables->execute("-A anti-hack -p tcp --tcp-flags SYN,FIN SYN,FIN -j log_drop");
+				$this->iptables->execute("-A security -p tcp --tcp-flags SYN,RST SYN,RST -j log_drop");
+				$this->iptables->execute("-A security -p tcp --tcp-flags SYN,FIN SYN,FIN -j log_drop");
 				# IP spoofing
-				#$this->iptables("-A anti-hack -p tcp --tcp-flags SYN,ACK SYN,ACK -m state --state NEW -j REJECT --reject-with tcp-reset");
+				#$this->iptables("-A security -p tcp --tcp-flags SYN,ACK SYN,ACK -m state --state NEW -j REJECT --reject-with tcp-reset");
 				# SYN flood
-				#$this->iptables("-A anti-hack -p tcp --syn -m limit ! --limit 2/s --limit-burst 8 -j log_drop");
+				#$this->iptables("-A security -p tcp --syn -m limit ! --limit 2/s --limit-burst 8 -j log_drop");
 
 				if ($this->debug) {
 					print "\n";
@@ -750,7 +812,7 @@
 
 				if ($this->server == "") {
 					if ($this->debug == false) {
-						print " ".RED.$interface.NORMAL;
+						print " ".RED.$interface.NORMAL." (could not determine IP address)";
 					}
 					continue;
 				}
@@ -786,8 +848,8 @@
 
 				/* Forwarding table
 				 */
-				$this->iptables->queue("-N ".$interface."_forw");
-				$this->iptables->queue("-A FORWARD -i $interface -j ".$interface."_forw");
+				$this->iptables->queue("-N ".$interface."_fwd");
+				$this->iptables->queue("-A FORWARD -i $interface -j ".$interface."_fwd");
 
 				if ($this->settings["enable_nat"]) {
 					/* SNAT table
@@ -798,15 +860,26 @@
 					/* DNAT table
 					 */
 					$this->iptables->queue("-N ".$interface."_dnat -t nat");
+					$this->iptables->queue("-A OUTPUT -t nat -o $interface -j ".$interface."_dnat");
 					$this->iptables->queue("-A PREROUTING -t nat -i $interface -j ".$interface."_dnat");
 				}
 
 				foreach ($rules as $rule) {
 					$rule = $this->replace_aliases($rule);
 
-					if (substr($rule, 0, 4) == "set ") {
+					if (strpos($rule, "$") !== false) {
+						printf("Rule contains unknown alias!\n-> %s\n", $rule);
+						return false;
+					}
+
+					list($command, $rest) = explode(" ", $rule, 2);
+
+					if ($command == "set") {
 						list(, $key, $value) = explode(" ", $rule, 3);
 						$this->aliases[$key] = $value;
+						continue;
+					} else if ($command == "blacklist") {
+						$this->apply_blacklist($interface, $rest);
 						continue;
 					}
 
@@ -881,7 +954,7 @@
 				$this->iptables->queue("-A ".$interface."_out -j log_drop");
 
 				if ($this->debug) {
-					printf("IPv%d iptables commands for ".GREEN.$interface.NORMAL.":\n", $this->ip_version);
+					printf("IPv%d iptables commands for %s%s%s:\n", $this->ip_version, GREEN, $interface, NORMAL);
 				}
 
 				if ($this->iptables->execute_queued() == false) {
@@ -929,6 +1002,7 @@
 					/* DNAT table
 					 */
 					$this->iptables->execute("-F ".$interface."_dnat -t nat");
+					$this->iptables->execute("-D OUTPUT -t nat -o ".$interface." -j ".$interface."_dnat");
 					$this->iptables->execute("-D PREROUTING -t nat -i ".$interface." -j ".$interface."_dnat");
 					$this->iptables->execute("-X ".$interface."_dnat -t nat");
 
@@ -941,9 +1015,9 @@
 
 				/* Forwarding table
 				 */
-				$this->iptables->execute("-F ".$interface."_forw");
-				$this->iptables->execute("-D FORWARD -i ".$interface." -j ".$interface."_forw");
-				$this->iptables->execute("-X ".$interface."_forw");
+				$this->iptables->execute("-F ".$interface."_fwd");
+				$this->iptables->execute("-D FORWARD -i ".$interface." -j ".$interface."_fwd");
+				$this->iptables->execute("-X ".$interface."_fwd");
 
 				/* Output table
 				 */
@@ -957,13 +1031,27 @@
 				$this->iptables->execute("-D INPUT -i ".$interface." -j ".$interface."_in");
 				$this->iptables->execute("-X ".$interface."_in");
 
+				/* Blacklist
+				 */
+				if ($this->table_exists($interface."_blip")) {
+					$this->iptables->execute("-F ".$interface."_blip");
+					$this->iptables->execute("-D INPUT -i ".$interface." -j ".$interface."_blip");
+					$this->iptables->execute("-X ".$interface."_blip");
+				}
+
+				if ($this->table_exists($interface."_blop")) {
+					$this->iptables->execute("-F ".$interface."_blop");
+					$this->iptables->execute("-D OUTPUT -o ".$interface." -j ".$interface."_blop");
+					$this->iptables->execute("-X ".$interface."_blop");
+				}
+
 				/* Support tables
 				 */
 				if ($this->count_firewalls() == 0) {
-					$this->iptables->execute("-D INPUT -p tcp -j anti-hack");
-					$this->iptables->execute("-D FORWARD -p tcp -j anti-hack");
-					$this->iptables->execute("-F anti-hack");
-					$this->iptables->execute("-X anti-hack");
+					$this->iptables->execute("-D INPUT -p tcp -j security");
+					$this->iptables->execute("-D FORWARD -p tcp -j security");
+					$this->iptables->execute("-F security");
+					$this->iptables->execute("-X security");
 
 					$this->iptables->execute("-D INPUT -j est_rel");
 					$this->iptables->execute("-D OUTPUT -j est_rel");
@@ -990,24 +1078,25 @@
 		 * ERROR:  -
 		 */
 		private function flush() {
-			$tables = array("");
+			print "Flushing iptables firewall:";
+			$tables = array("filter");
 			if ($this->settings["enable_nat"]) {
-				array_push($tables, " -t nat");
+				array_push($tables, "nat");
 			}
 
 			foreach ($tables as $table) {
-				$this->iptables->execute("-L -n".$table, $output);
+				$this->iptables->execute("-L -nt ".$table, $output);
 
 				foreach ($output as $line) {
 					if (substr($line, 0, 5) == "Chain") {
 						$field = explode(" (", substr($line, 6), 2);
-						$this->iptables->execute("-F ".$field[0].$table);
+						$this->iptables->execute("-F ".$field[0]." -t ".$table);
 					}
 				}
 				foreach ($output as $line) {
 					if ((substr($line, 0, 5) == "Chain") && (strpos($line, "(policy") === false)) {
 						$field = explode(" (", substr($line, 6), 2);
-						$this->iptables->execute("-X ".$field[0].$table);
+						$this->iptables->execute("-X ".$field[0]." -t ".$table);
 					}
 				}
 			}
@@ -1016,6 +1105,8 @@
 			$this->iptables->execute("-P INPUT ACCEPT");
 			$this->iptables->execute("-P OUTPUT ACCEPT");
 			$this->iptables->execute("-P FORWARD DROP");
+
+			print " ".GREEN."IPv".$this->ip_version.NORMAL."\n";
 		}
 
 		/* Show firewall status
@@ -1101,11 +1192,19 @@
 				case "restart":
 					if ($this->stop($args) == false) {
 						return false;
+					} else if ($this->start($args) == false) {
+						$this->flush();
+						return false;
 					} else {
-						return $this->start($args);
+						return true;
 					}
 				case "start":
-					return $this->start($args);
+					if ($this->start($args) == false) {
+						$this->flush();
+						return false;
+					} else {
+						return true;
+					}
 				case "stop":
 					return $this->stop($args);
 				case "flush":

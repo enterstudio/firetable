@@ -8,7 +8,7 @@ firetable \- IPtables firewall script
 {start|stop|restart|status|flush|debug}
 
 .SH CONFIG
-Place the configuration for each interface in a seperate file: /etc/firetable/ipv[46]_<interface>
+Place the configuration for each interface in a separate file: /etc/firetable/ipv[46]_<interface>
 
 .SH FORMAT
 include <filename>
@@ -16,6 +16,8 @@ include <filename>
 set subnetmask 0..32
 .br
 set <variable> <value>    usage: $<variable>
+
+blacklist <url|filename>
 
 (accept|drop|reject) (incoming|outgoing) ip [from <subnet>] [to <subnet>]
 .br
@@ -63,14 +65,17 @@ iptables <iptables commandline options>
 .br
  'anywhere' will be translated to '0.0.0.0/0' for IPv4 or '::/0' for IPv6
 
+.SH BLACKLIST
+The URL or file must contain a list of IP addresses. It may contain a comment line starting with a hash.
+
 .SH SETS
-You can combine multiple lines by using sets. The elements in a set are seperated by commas and the set starts and ends with an accolade. For example, the configuration line
+You can combine multiple lines by using sets. The elements in a set are separated by commas and the set starts and ends with an accolade. For example, the configuration line
 .br
 
 	accept incoming {tcp, udp} to server:{100, 200}
 .br
 
-expands to:
+expands to
 .br
 
 	accept incoming tcp to server:100
@@ -82,9 +87,9 @@ expands to:
 	accept incoming udp to server:200
 
 .SH EXAMPLE
-In the following example, a server connects a LAN (eth1) to the Internet (eth0).
+In the following example, a server connects a LAN (eth1) to the internet (eth0).
 .TP
-.B Configuration file for the Internet interface (ipv4_eth0):
+.B Configuration file for the internet interface (ipv4_eth0):
 # Firetable configurationfile for eth0
 .br
 #
@@ -151,17 +156,20 @@ accept outgoing ip from anywhere
 .SH SETTINGS
 Place the following settings in /etc/firetable/firetable.conf
 .TP
-.B enable_nat = yes|no
-If you've disabled NAT in the kernel, also disable it in Firetable.
+.B enable_ipv[46] = yes|no
+Enable support for Internet Protocol version 4 and/or 6.
 .TP
-.B use_colors = yes|no
-Allow Firetable to use colors.
+.B enable_nat = yes|no
+Enable support for Network Address Translation.
 .TP
 .B enable_on_boot = [<interface> [<interface>] ...]
-Space-seperated list of interfaces Firetable will use at boottime. When empty, Firetable will use all available interfaces.
+Space-separated list of interfaces for which the firewall will be enabled during boottime. When set to 'all', Firetable will enable the firewall for all available interfaces.
 .TP
 .B log_priority = (debug|info|notice|warning|error|crit|alert|panic)
 Syslog's log priority for Firetable
+.TP
+.B iptables[46] = /path/to/iptables/binary
+Specify the path of the iptables binaries. Default points to /sbin/iptables for IPv4 and /sbin/ip6tables for IPv6.
 
 .SH FILES
 .B /usr/sbin/firetable
@@ -175,4 +183,4 @@ Syslog's log priority for Firetable
 .SH AUTHOR
 Firetable is written by Hugo Leisink <hugo@leisink.net> in PHP. More info about Firetable at website:
 .br
-\fIhttp://projects.leisink.org/\fP
+\fIhttp://projects.leisink.net/\fP
