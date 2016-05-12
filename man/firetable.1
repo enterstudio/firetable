@@ -15,8 +15,10 @@ include <filename>
 
 set subnetmask 0..32
 .br
-set <variable> <value>    usage: $<variable>
-
+set <variable> <value>
+.br
+file <variable> <filename>
+.br
 blacklist <url|filename>
 
 (accept|drop|reject) (incoming|outgoing) ip [from <subnet>] [to <subnet>]
@@ -57,6 +59,11 @@ iptables <iptables commandline options>
 <port>  : (1..65535)[-(1..65535)]
 .br
 <userid>: (0..65535)
+
+.SH VARIABLES
+Via the command 'set', you can define variables. When using a variable, use the variable name starting with a dollar sign. For example, 'set key = value' sets the variable 'key' with the value 'value'. When using this variable, use '$key'.
+
+Via the command 'file', you can set a variable with the content of a file, defined as a set. For example, 'file key file.txt' will set the variable 'key' with the value "{ <line 1>, <line 2>, ... }". Read more about sets in the chapter SETS.
 
 .SH ALIASES
  'server' will be translated to the IP address of the interface

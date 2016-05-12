@@ -43,7 +43,7 @@ fi
 dh_installdirs
 echo "-- Building package"
 dh_strip
-cp ../src/firetable debian/firetable/usr/sbin
+install ../src/firetable debian/firetable/usr/sbin
 cp ../config/* debian/firetable/etc/firetable
 fakeroot dh_installman ../man/firetable.1
 fakeroot dh_installinit -n

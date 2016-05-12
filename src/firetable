@@ -13,7 +13,7 @@
 	 * GNU General Public License for more details.
 	 */
 
-	define("VERSION", "5.4");
+	define("VERSION", "5.5");
 	define("CONFIG_DIR", "/etc/firetable");
 
 	define("NORMAL", "\x1b[0m");
@@ -805,9 +805,9 @@
 
 			foreach ($interfaces as $interface) {
 				if ($this->ip_version == 4) {
-					$this->server = trim(exec("/sbin/ifconfig ".$interface." | grep 'inet addr' | cut -f2 -d':' | cut -f1 -d' '"));
+					$this->server = trim(exec("ip addr list ".$interface." | grep 'inet ' | sed 's/^ *//' | cut -d' ' -f2 | cut -d/ -f1"));
 				} else {
-					$this->server = trim(exec("/sbin/ifconfig ".$interface." | grep 'inet6 addr' | grep 'Scope:Global' | head -1 | cut -f2- -d':' | cut -f2 -d' ' | cut -f1 -d'/'"));
+					$this->server = trim(exec("ip addr list ".$interface." | grep 'scope global' | grep inet6 | sed 's/^ *//' | cut -d' ' -f2 | cut -d/ -f1"));
 				}
 
 				if ($this->server == "") {
@@ -830,7 +830,7 @@
 				}
 
 				$this->aliases = array(
-					"subnetmask" => "32");
+					"subnetmask" => (string)$this->default_subnetmask);
 
 				if (($this->ip_version == 4) && ($this->debug == false)) {
 					system("echo 1 > /proc/sys/net/ipv4/conf/".$interface."/rp_filter");
@@ -875,10 +875,38 @@
 					list($command, $rest) = explode(" ", $rule, 2);
 
 					if ($command == "set") {
-						list(, $key, $value) = explode(" ", $rule, 3);
+						/* Set
+						 */
+						list($key, $value) = explode(" ", $rest, 2);
 						$this->aliases[$key] = $value;
 						continue;
+					} else if ($command == "file") {
+						/* File
+						 */
+						list($key, $file) = explode(" ", $rest, 2);
+
+						if (substr($file, 0, 1) != "/") {
+							$file = CONFIG_DIR."/".$file;
+						}
+
+						if (($data = file($file)) === false) {
+							printf("Warning, file %s not found.\n", $rest);
+						} else {
+							$values = array();
+							foreach ($data as $value) {
+								$value = trim(preg_replace('/#.*/', "", $value));
+								if ($value != "") {
+									array_push($values, $value);
+								}
+							}
+							$value = "{ ".implode(", ", $values)." }";
+							$this->aliases[$key] = $value;
+						}
+
+						continue;
 					} else if ($command == "blacklist") {
+						/* Blacklist
+						 */
 						$this->apply_blacklist($interface, $rest);
 						continue;
 					}
@@ -1230,6 +1258,7 @@
 	 */
 	class firetable4 extends firetable {
 		protected $ip_version = 4;
+		protected $default_subnetmask = 32;
 		protected $digit_separator = ":";
 		protected $anywhere = "0.0.0.0/0";
 		protected $icmp = "icmp";
@@ -1239,6 +1268,7 @@
 	 */
 	class firetable6 extends firetable {
 		protected $ip_version = 6;
+		protected $default_subnetmask = 48;
 		protected $digit_separator = ".";
 		protected $anywhere = "::/0";
 		protected $icmp = "icmpv6";
