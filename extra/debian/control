@@ -7,7 +7,7 @@ Standards-Version: 3.6.2
 
 Package: firetable
 Architecture: any
-Depends: netbase, iptables, php5-cli
+Depends: netbase, iptables, php-cli
 Conflicts:
 Description: IPtables firewall management script
  Script to maintain an IPtables firewall
